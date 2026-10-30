@@ -4,7 +4,7 @@ A web app that shows every scenario and test case written by the ai-qa pipeline,
 result per test case. A case with an automated test gets its result only by running it; only a case
 with none (a manual check) has its result set by hand.
 
-- `backend/`: NestJS API with a Postgres database. It reads the test case files from ai-qa's
+- `backend/`: NestJS API with a MySQL 8.4 database. It reads the test case files from ai-qa's
   `specs/` folder into the database and serves them, with the results and runs, to the frontend.
   It keeps nothing in memory or on disk, so it can run as several containers.
 - `frontend/`: React (Vite) app.
@@ -17,7 +17,7 @@ direction only: never edit a test case in the database.
 ```
 ai-qa repo ── push-specs (CI on merge, or by hand) ──► POST /api/sync
 
-browser ◄── nginx (frontend container) ──► API containers ◄──► Postgres
+browser ◄── nginx (frontend container) ──► API containers ◄──► MySQL
                                                ▲
                                                │ HTTPS + RUNNER_TOKEN, polls every 2 s
                      runner agent on each tester's laptop (ai-qa checkout, .venv, browsers)
@@ -25,13 +25,14 @@ browser ◄── nginx (frontend container) ──► API containers ◄──�
 
 ## Run it locally
 
-Needs Node 20.12+ and a running Postgres.
+Needs Node 20.12+ and Docker (for MySQL).
 
 ```bash
-createdb test_manager                 # once
+cp .env.example .env                  # once; fill in the passwords and tokens
+docker compose up -d db               # MySQL on 127.0.0.1:3307
 
 cd backend
-cp .env.example .env                  # once; check SPECS_DIR, and set RUNNER_TOKEN to any value
+cp .env.example .env                  # once; DATABASE_URL with MYSQL_PASSWORD, SPECS_DIR, RUNNER_TOKEN
 npm install
 npm run dev                           # http://localhost:4000/api
 
@@ -139,11 +140,11 @@ laptop; the app can't tell whether QA has since expired it, so log in again when
 
 ## Deploying with Docker
 
-`docker-compose.yml` runs Postgres, the API and the web app (nginx, which also passes `/api` on to
+`docker-compose.yml` runs MySQL, the API and the web app (nginx, which also passes `/api` on to
 the API, so the app and API share one address).
 
 ```bash
-cp .env.example .env          # POSTGRES_PASSWORD, SYNC_TOKEN, RUNNER_TOKEN: long random values
+cp .env.example .env          # MYSQL_PASSWORD, MYSQL_ROOT_PASSWORD, SYNC_TOKEN, RUNNER_TOKEN: long random values
 docker compose up -d --build  # http://<host>:8080
 ```
 
@@ -163,15 +164,21 @@ Notes for running it elsewhere (Render, Railway, Fly, ECS, a VM):
 - **Images:** `backend/Dockerfile` and `frontend/Dockerfile`. The frontend container needs
   `BACKEND_URL` (where it reaches the API, e.g. `http://backend:4000`). Both have health checks; the
   API's is `GET /api/health`.
-- **Several API containers** work: events between them go through Postgres `LISTEN/NOTIFY`, spec syncs
-  take a lock, and runs are claimed with row locks. Run migrations once per deploy
+- **Several API containers** work: each writes its changes to the `change_events` table and reads the
+  others' every second, spec syncs take a lock, and runs are claimed with row locks
+  (`FOR UPDATE SKIP LOCKED`).
+- **Database:** MySQL 8.4 with `utf8mb4_0900_bin` (case-sensitive, like the ai-qa paths and ids) and
+  UTC. A managed MySQL (RDS, Cloud SQL, PlanetScale…) works with `DATABASE_URL=mysql://…`; give it
+  `max_allowed_packet` of at least 64 MB, since a run report with screenshots is sent in one statement. Run migrations once per deploy
   (`MIGRATIONS_RUN=false` on the containers, and `npm run migrate` as a release step) instead of on
   every container's start.
 - **Serving the frontend from another address** than the API: build it with
   `VITE_API_URL=https://<api host>/api` and set the API's `CORS_ORIGIN` to the frontend's address.
-- **Moving an existing database:** the migration keeps all runs and results; results recorded before it
-  are put under `qa.done.deals`. Screenshots older runs kept on disk are copied in with
-  `node backend/scripts/import-screenshots.mjs /path/to/storage/reports` (run once with `DATABASE_URL` set).
+- **Moving from the old Postgres database:** create the MySQL tables (`npm run migrate`), then
+  `POSTGRES_URL=postgres://… DATABASE_URL=mysql://… npm run migrate-from-postgres` in `backend/`. It only
+  reads Postgres, refuses a MySQL database that already has test cases, and copies everything in one
+  transaction; results recorded before environments existed go under `qa.done.deals`. Screenshots older
+  runs kept on disk are copied in with `node scripts/import-screenshots.mjs /path/to/storage/reports`.
 
 Not done yet: sign-in and a record of who set a result or started a run; screenshots move to object
 storage (S3) if the database grows too big for them.

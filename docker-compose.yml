@@ -1,26 +1,38 @@
-# Test Manager: Postgres, the API and the web app. Copy .env.example to .env first.
+# Test Manager: MySQL, the API and the web app. Copy .env.example to .env first.
 #   docker compose up -d --build        then open http://localhost:8080
+# For local development, only the database: docker compose up -d db  (on 127.0.0.1:3307)
 # The API can run as several containers: docker compose up -d --scale backend=2
 services:
   db:
-    image: postgres:16.10-alpine
+    image: mysql:8.4.6
+    command:
+      - --character-set-server=utf8mb4
+      # Case-sensitive comparisons, so node ids and paths that differ only in case stay apart.
+      - --collation-server=utf8mb4_0900_bin
+      - --default-time-zone=+00:00
+      # Room for a spec sync or a run report with screenshots in one statement.
+      - --max-allowed-packet=64M
     environment:
-      POSTGRES_DB: test_manager
-      POSTGRES_USER: test_manager
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      MYSQL_DATABASE: test_manager
+      MYSQL_USER: test_manager
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    ports:
+      # Only this machine can reach it: for local development and `npm run migrate-from-postgres`.
+      - "127.0.0.1:${MYSQL_PORT:-3307}:3306"
     volumes:
-      - db:/var/lib/postgresql/data
+      - db:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_manager -d test_manager"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
     restart: unless-stopped
 
   backend:
     build: ./backend
     environment:
-      DATABASE_URL: postgres://test_manager:${POSTGRES_PASSWORD}@db:5432/test_manager
+      DATABASE_URL: mysql://test_manager:${MYSQL_PASSWORD}@db:3306/test_manager
       SYNC_TOKEN: ${SYNC_TOKEN:?set SYNC_TOKEN in .env}
       RUNNER_TOKEN: ${RUNNER_TOKEN:?set RUNNER_TOKEN in .env}
       # Runs the migrations on start. With several API containers, set it to false and run

@@ -1,6 +1,6 @@
 import { BeforeApplicationShutdown, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { Client } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { Subject } from 'rxjs';
 import { DataSource } from 'typeorm';
 
@@ -9,11 +9,16 @@ import { DataSource } from 'typeorm';
 export type ChangeEvent = 'catalog' | 'results' | 'automation' | 'runs' | 'logins' | 'runners';
 const EVENTS: ChangeEvent[] = ['catalog', 'results', 'automation', 'runs', 'logins', 'runners'];
 
-const CHANNEL = 'tm_events';
-const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
+// How often each instance looks for changes made by the others.
+const POLL_MS = 1000;
+// Changes are only needed until every instance has read them.
+const KEEP_MS = 10 * 60_000;
+const PRUNE_MS = 60_000;
 
 // Tells open pages that something changed, so they refetch it without waiting for their next poll.
-// Changes go through Postgres NOTIFY, so pages connected to any backend instance hear about them.
+// Pages connected to this instance hear its changes at once; every change is also written to the
+// change_events table, which each instance reads every second, so pages connected to any backend
+// instance hear about changes made on the others.
 @Injectable()
 export class EventsService implements OnApplicationBootstrap, BeforeApplicationShutdown {
   private readonly logger = new Logger(EventsService.name);
@@ -21,59 +26,69 @@ export class EventsService implements OnApplicationBootstrap, BeforeApplicationS
   // Fires when the backend shuts down. Open event streams end then: the server only closes once every
   // connection has, and a page left open would otherwise keep it (and a dev reload) waiting forever.
   readonly closing = new Subject<void>();
-  private listener: Client | null = null;
-  private stopped = false;
-  private attempt = 0;
+  private readonly origin = randomUUID();
+  private lastId = 0;
+  private reading = false;
+  private failing = false;
+  private poller?: NodeJS.Timeout;
+  private pruner?: NodeJS.Timeout;
 
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async onApplicationBootstrap() {
-    await this.listen();
+    const [row] = await this.dataSource.query('SELECT COALESCE(MAX(id), 0) AS id FROM change_events');
+    this.lastId = Number(row.id);
+    this.poller = setInterval(() => void this.read(), POLL_MS);
+    this.pruner = setInterval(() => void this.prune(), PRUNE_MS);
   }
 
-  async beforeApplicationShutdown() {
-    this.stopped = true;
+  beforeApplicationShutdown() {
+    clearInterval(this.poller);
+    clearInterval(this.pruner);
     this.closing.next();
     this.closing.complete();
-    await this.listener?.end().catch(() => undefined);
   }
 
-  // Without a listener (Postgres unreachable for a moment), at least this instance's pages hear it.
   emit(event: ChangeEvent) {
-    if (!this.listener) {
-      this.changes.next(event);
-      return;
-    }
-    this.dataSource.query('SELECT pg_notify($1, $2)', [CHANNEL, event]).catch(() => this.changes.next(event));
+    this.changes.next(event);
+    this.dataSource
+      .query('INSERT INTO change_events (event, origin) VALUES (?, ?)', [event, this.origin])
+      .catch((error: Error) => this.logger.error(`Could not share a change: ${error.message}`));
   }
 
-  private async listen() {
-    const client = new Client({ connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/test_manager' });
-    client.on('notification', ({ payload }) => {
-      if (EVENTS.includes(payload as ChangeEvent)) this.changes.next(payload as ChangeEvent);
-    });
-    client.on('error', (error) => this.logger.error(`Event listener: ${error.message}`));
-    client.on('end', () => {
-      if (this.listener === client) this.listener = null;
-      this.retry();
-    });
+  // The changes the other instances made since the last read.
+  private async read() {
+    if (this.reading) return;
+    this.reading = true;
     try {
-      await client.connect();
-      await client.query(`LISTEN ${CHANNEL}`);
-      this.listener = client;
-      // Changes made while it was away were missed: every page refetches everything.
-      if (this.attempt > 0) EVENTS.forEach((event) => this.changes.next(event));
-      this.attempt = 0;
+      const rows: { id: string | number; event: string; origin: string }[] = await this.dataSource.query(
+        'SELECT id, event, origin FROM change_events WHERE id > ? ORDER BY id LIMIT 500',
+        [this.lastId],
+      );
+      const seen = new Set<ChangeEvent>();
+      for (const row of rows) {
+        this.lastId = Number(row.id);
+        if (row.origin !== this.origin && EVENTS.includes(row.event as ChangeEvent)) seen.add(row.event as ChangeEvent);
+      }
+      seen.forEach((event) => this.changes.next(event));
+      if (this.failing) {
+        // Changes made while the database was unreachable were missed: every page refetches everything.
+        this.failing = false;
+        EVENTS.forEach((event) => this.changes.next(event));
+      }
     } catch (error) {
-      this.logger.error(`Could not listen for changes: ${error instanceof Error ? error.message : String(error)}`);
-      await client.end().catch(() => undefined);
-      this.retry();
+      if (!this.failing) this.logger.error(`Could not read changes: ${error instanceof Error ? error.message : String(error)}`);
+      this.failing = true;
+    } finally {
+      this.reading = false;
     }
   }
 
-  private retry() {
-    if (this.stopped) return;
-    const wait = RETRY_MS[Math.min(this.attempt++, RETRY_MS.length - 1)];
-    setTimeout(() => void this.listen(), wait).unref();
+  private async prune() {
+    try {
+      await this.dataSource.query('DELETE FROM change_events WHERE created_at < ?', [new Date(Date.now() - KEEP_MS)]);
+    } catch {
+      // Tried again next time.
+    }
   }
 }

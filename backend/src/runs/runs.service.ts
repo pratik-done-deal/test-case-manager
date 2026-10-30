@@ -123,9 +123,9 @@ export class RunsService implements OnApplicationBootstrap, OnModuleDestroy {
 
     const snapshot = await this.snapshot(Object.keys(cases));
 
-    // One run at a time per runner: the lock makes two Run clicks at once queue only one.
+    // One run at a time per runner: locking its row makes two Run clicks at once queue only one.
     const run = await this.dataSource.transaction(async (manager) => {
-      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`runner:${runnerId}`]);
+      await manager.findOne(Runner, { where: { id: runnerId }, select: { id: true }, lock: { mode: 'pessimistic_write' } });
       const going = await manager.findOne(Run, { where: { runnerId, status: In(['queued', 'running']) } });
       if (going) throw new ConflictException(`${runner.name} already has a run going; stop it or wait for it to end`);
       return manager.save(
@@ -140,6 +140,7 @@ export class RunsService implements OnApplicationBootstrap, OnModuleDestroy {
           currentTest: null,
           options: { includeDestructive, headed },
           scope,
+          scopeKey: scope?.key ?? null,
           cases,
           snapshot,
           summary: null,
@@ -174,16 +175,17 @@ export class RunsService implements OnApplicationBootstrap, OnModuleDestroy {
 
   // The runner's next queued run, now running; null when there is none.
   async claim(runnerId: string) {
-    const [rows] = await this.dataSource.query(
-      `UPDATE runs SET status = 'running', heartbeat_at = now(), started_at = now()
-       WHERE id = (
-         SELECT id FROM runs WHERE runner_id = $1 AND status = 'queued'
-         ORDER BY started_at LIMIT 1 FOR UPDATE SKIP LOCKED
-       )
-       RETURNING id, cases, options`,
-      [runnerId],
-    );
-    const row = (rows as { id: string; cases: Record<string, string[]>; options: Run['options'] }[])[0];
+    const row = await this.dataSource.transaction(async (manager) => {
+      const [queued]: { id: string }[] = await manager.query(
+        `SELECT id FROM runs WHERE runner_id = ? AND status = 'queued'
+         ORDER BY started_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        [runnerId],
+      );
+      if (!queued) return null;
+      const now = new Date();
+      await manager.update(Run, queued.id, { status: 'running', heartbeatAt: now, startedAt: now });
+      return manager.findOne(Run, { where: { id: queued.id }, select: { id: true, cases: true, options: true } });
+    });
     if (!row) return null;
     this.events.emit('runs');
     return { id: row.id, nodeids: [...new Set(Object.values(row.cases).flat())], headed: row.options.headed };
@@ -221,9 +223,8 @@ export class RunsService implements OnApplicationBootstrap, OnModuleDestroy {
             screenshots,
           })
           .orIgnore() // a report the runner sent again after a lost reply
-          .returning('nodeid')
           .execute();
-        if ((inserted.raw as unknown[]).length) {
+        if ((inserted.raw as { affectedRows: number }).affectedRows) {
           position++;
           done.push(event.nodeid);
         }
@@ -231,8 +232,8 @@ export class RunsService implements OnApplicationBootstrap, OnModuleDestroy {
       }
 
       await manager.query(
-        `UPDATE runs SET log = right(log || $2, ${LOG_LIMIT}), heartbeat_at = now(), current_test = $3 WHERE id = $1`,
-        [id, log, current],
+        `UPDATE runs SET log = RIGHT(CONCAT(log, ?), ${LOG_LIMIT}), heartbeat_at = ?, current_test = ? WHERE id = ?`,
+        [log, new Date(), current, id],
       );
       const results = done.length ? await this.recordResults(manager, run, done) : false;
       return { stop: run.stopRequested, changed: done.length > 0 || Boolean(log) || current !== run.currentTest, results };
@@ -261,7 +262,7 @@ export class RunsService implements OnApplicationBootstrap, OnModuleDestroy {
       .where('run.status NOT IN (:...going)', { going: ['queued', 'running'] })
       .orderBy('run.startedAt', 'DESC')
       .limit(limit);
-    if (scopeKey) query.andWhere(`run.scope ->> 'key' = :scopeKey`, { scopeKey });
+    if (scopeKey) query.andWhere('run.scopeKey = :scopeKey', { scopeKey });
     return query.getMany();
   }
 
@@ -279,7 +280,7 @@ export class RunsService implements OnApplicationBootstrap, OnModuleDestroy {
     if (found.scope?.key) {
       earlier = await this.runs
         .createQueryBuilder('run')
-        .where(`run.scope ->> 'key' = :key`, { key: found.scope.key })
+        .where('run.scopeKey = :key', { key: found.scope.key })
         .andWhere('run.startedAt < :startedAt', { startedAt: found.startedAt })
         .andWhere('run.status IN (:...statuses)', { statuses: ['finished', 'stopped'] })
         .orderBy('run.startedAt', 'DESC')

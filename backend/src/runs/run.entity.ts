@@ -51,7 +51,7 @@ export class Run {
   @Column('text')
   status: RunStatus;
 
-  @Column('uuid', { name: 'runner_id', nullable: true })
+  @Column('char', { length: 36, name: 'runner_id', nullable: true })
   runnerId: string | null;
 
   // The app the tests point at, e.g. "qa.done.deals": the environment its results are kept under.
@@ -63,34 +63,38 @@ export class Run {
   stopRequested: boolean;
 
   // When the runner last reported on it; a running run that goes quiet was interrupted.
-  @Column('timestamptz', { name: 'heartbeat_at', nullable: true })
+  @Column('datetime', { precision: 3, name: 'heartbeat_at', nullable: true })
   heartbeatAt: Date | null;
 
   // The node id of the test running now.
   @Column('text', { name: 'current_test', nullable: true })
   currentTest: string | null;
 
-  @Column('jsonb')
+  @Column('json')
   options: { includeDestructive: boolean; headed: boolean };
 
-  @Column('jsonb', { nullable: true })
+  @Column('json', { nullable: true })
   scope: RunScope | null;
 
-  @Column('jsonb', { nullable: true })
+  // scope.key, as its own column so the runs of one scope can be found with an index.
+  @Column('varchar', { name: 'scope_key', length: 500, nullable: true })
+  scopeKey: string | null;
+
+  @Column('json', { nullable: true })
   environment: RunEnvironment | null;
 
   // { <test case id>: [node ids of its tests] }
-  @Column('jsonb')
+  @Column('json')
   cases: Record<string, string[]>;
 
   // { <test case id>: the case as it read at the start }
-  @Column('jsonb')
+  @Column('json')
   snapshot: Record<string, CaseSnapshot>;
 
   // { <node id>: outcome }, filled in as tests finish. Stored as run_tests rows; loaded by RunsService.
   outcomes: Record<string, TestOutcome>;
 
-  @Column('jsonb', { nullable: true })
+  @Column('json', { nullable: true })
   summary: RunSummary | null;
 
   // The end of pytest's output.
@@ -100,20 +104,20 @@ export class Run {
   @Column('int', { name: 'exit_code', nullable: true })
   exitCode: number | null;
 
-  @Column('timestamptz', { name: 'started_at' })
+  @Column('datetime', { precision: 3, name: 'started_at' })
   startedAt: Date;
 
-  @Column('timestamptz', { name: 'finished_at', nullable: true })
+  @Column('datetime', { precision: 3, name: 'finished_at', nullable: true })
   finishedAt: Date | null;
 }
 
 // What pytest said about one test of a run.
 @Entity('run_tests')
 export class RunTest {
-  @PrimaryColumn('uuid', { name: 'run_id' })
+  @PrimaryColumn('char', { length: 36, name: 'run_id' })
   runId: string;
 
-  @PrimaryColumn('text')
+  @PrimaryColumn('varchar', { length: 700 })
   nodeid: string;
 
   // The order the tests finished in.
@@ -126,28 +130,28 @@ export class RunTest {
   @Column('text', { nullable: true })
   message: string | null;
 
-  @Column('real', { nullable: true })
+  @Column('double', { nullable: true })
   duration: number | null;
 
-  @Column('jsonb')
+  @Column('json')
   screenshots: { url: string; file: string }[];
 }
 
 // A failure screenshot kept with its run, since the runner's own copies are overwritten by every run.
 @Entity('screenshots')
 export class Screenshot {
-  @PrimaryColumn('uuid', { name: 'run_id' })
+  @PrimaryColumn('char', { length: 36, name: 'run_id' })
   runId: string;
 
-  @PrimaryColumn('text')
+  @PrimaryColumn('varchar', { length: 200 })
   file: string;
 
   @Column('text', { name: 'content_type' })
   contentType: string;
 
-  @Column('bytea')
+  @Column('longblob')
   data: Buffer;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt: Date;
 }

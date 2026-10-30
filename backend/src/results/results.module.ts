@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Result, TestCase } from '../catalog/entities';
+import { Runner } from '../runners/runner.entity';
 import { RunsModule } from '../runs/runs.module';
 import { ResultsController } from './results.controller';
 import { ResultsService } from './results.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Result, TestCase]), RunsModule],
+  imports: [TypeOrmModule.forFeature([Result, TestCase, Runner]), RunsModule],
   controllers: [ResultsController],
   providers: [ResultsService],
 })

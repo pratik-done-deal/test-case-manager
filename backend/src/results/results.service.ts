@@ -1,8 +1,10 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { Result, TestCase } from '../catalog/entities';
 import { EventsService } from '../events/events.service';
+import { Runner } from '../runners/runner.entity';
+import { environmentKey } from '../runs/environment';
 import { TestIndexService } from '../runs/test-index.service';
 
 export type ResultStatus = 'pass' | 'fail';
@@ -10,7 +12,7 @@ export type ResultStatus = 'pass' | 'fail';
 @Injectable()
 export class ResultsService {
   constructor(
-    @InjectDataSource() private readonly dataSource: DataSource,
+    @InjectRepository(Runner) private readonly runners: Repository<Runner>,
     @InjectRepository(Result) private readonly results: Repository<Result>,
     @InjectRepository(TestCase) private readonly testCases: Repository<TestCase>,
     private readonly events: EventsService,
@@ -25,16 +27,20 @@ export class ResultsService {
 
   // Every environment that has results or a runner pointed at it, most results first.
   async environments(): Promise<{ key: string; results: number }[]> {
-    const rows: { key: string; results: string }[] = await this.dataSource.query(`
-      SELECT key, sum(n)::int AS results FROM (
-        SELECT environment AS key, count(*) AS n FROM results GROUP BY environment
-        UNION ALL
-        SELECT substring(environment ->> 'appUrl' from '^[a-z]+://([^/]+)'), 0 FROM runners
-        WHERE environment ->> 'appUrl' IS NOT NULL
-      ) environments
-      GROUP BY key ORDER BY results DESC, key
-    `);
-    return rows.map((row) => ({ key: row.key, results: Number(row.results) }));
+    const rows: { key: string; results: string | number }[] = await this.results
+      .createQueryBuilder('result')
+      .select('result.environment', 'key')
+      .addSelect('COUNT(*)', 'results')
+      .groupBy('result.environment')
+      .getRawMany();
+    const counts = new Map(rows.map((row) => [row.key, Number(row.results)]));
+    for (const runner of await this.runners.find({ select: { id: true, environment: true } })) {
+      const key = environmentKey(runner.environment?.appUrl);
+      if (key && !counts.has(key)) counts.set(key, 0);
+    }
+    return [...counts]
+      .map(([key, results]) => ({ key, results }))
+      .sort((a, b) => b.results - a.results || a.key.localeCompare(b.key));
   }
 
   async set(testCaseId: string, environment: string, status: ResultStatus | null) {

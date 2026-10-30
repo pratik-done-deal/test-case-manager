@@ -124,7 +124,8 @@ export class SyncService {
 
     await this.dataSource.transaction(async (manager) => {
       // One sync at a time across every backend instance: two at once would archive each other's rows.
-      await manager.query(`SELECT pg_advisory_xact_lock(hashtext('test-manager:sync'))`);
+      // Locking every suite row makes a second sync wait here until the first commits.
+      await manager.query('SELECT id FROM suites FOR UPDATE');
       const now = new Date();
       const stored = await manager.find(Suite);
       const uploaded = new Set(docs.map((doc) => doc.source));
@@ -160,7 +161,7 @@ export class SyncService {
       for (const suite of gone) suite.archivedAt = now;
       await manager.save(gone);
 
-      await manager.clear(Folder);
+      await manager.createQueryBuilder().delete().from(Folder).execute();
       await manager.save(Folder, [...folders.values()]);
       report.suites = kept.size;
     });

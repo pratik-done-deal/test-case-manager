@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { EventsService } from '../events/events.service';
@@ -7,7 +8,7 @@ import type { RunEnvironment } from '../runs/run.entity';
 import { environmentKey } from '../runs/environment';
 import { RunsService } from '../runs/runs.service';
 import { isOnline } from './online';
-import { Runner, type RunnerCommand, type RunnerLogins } from './runner.entity';
+import { Runner, type RunnerLogins } from './runner.entity';
 
 // The runner agents on testers' laptops: who they are, what they collected, and what they are asked to do.
 @Injectable()
@@ -38,17 +39,17 @@ export class RunnersService {
 
   // A runner starting up: registered by name, so a restarted agent keeps its id and run history.
   async hello(name: string, environment: RunEnvironment | null, logins: RunnerLogins | null) {
-    const rows = await this.dataSource.query(
-      `INSERT INTO runners (name, environment, logins, last_seen_at, commands)
-       VALUES ($1, $2, $3, now(), '[]')
-       ON CONFLICT (name) DO UPDATE
-         SET environment = EXCLUDED.environment, logins = EXCLUDED.logins, last_seen_at = now(), commands = '[]'
-       RETURNING id`,
-      [name, environment && JSON.stringify(environment), logins && JSON.stringify(logins)],
+    await this.dataSource.query(
+      `INSERT INTO runners (id, name, environment, logins, last_seen_at, tests, commands)
+       VALUES (?, ?, ?, ?, ?, '[]', '[]')
+       ON DUPLICATE KEY UPDATE
+         environment = VALUES(environment), logins = VALUES(logins), last_seen_at = VALUES(last_seen_at), commands = '[]'`,
+      [randomUUID(), name, environment && JSON.stringify(environment), logins && JSON.stringify(logins), new Date()],
     );
+    const runner = await this.runners.findOneOrFail({ where: { name }, select: { id: true } });
     this.events.emit('runners');
     this.events.emit('logins');
-    return { id: (rows as { id: string }[])[0].id };
+    return { id: runner.id };
   }
 
   async setTests(id: string, tests: CollectedTest[], reason: string | null, environment: RunEnvironment | null) {
@@ -72,17 +73,18 @@ export class RunnersService {
 
   // The runner checking in: hands it the login commands waiting for it and its next queued run.
   async poll(id: string) {
-    const [rows] = await this.dataSource.query(
-      `UPDATE runners r SET commands = '[]', last_seen_at = now()
-       FROM (SELECT id, commands, last_seen_at FROM runners WHERE id = $1 FOR UPDATE) old
-       WHERE r.id = old.id
-       RETURNING old.commands, old.last_seen_at`,
-      [id],
-    );
-    const row = (rows as { commands: RunnerCommand[]; last_seen_at: Date }[])[0];
+    const row = await this.dataSource.transaction(async (manager) => {
+      const runner = await manager.findOne(Runner, {
+        where: { id },
+        select: { id: true, commands: true, lastSeenAt: true },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (runner) await manager.update(Runner, id, { commands: [], lastSeenAt: new Date() });
+      return runner;
+    });
     if (!row) throw new NotFoundException('Unknown runner; say hello first');
     // Back after being offline: pages showing it as offline refresh.
-    if (!isOnline({ lastSeenAt: new Date(row.last_seen_at) })) this.events.emit('runners');
+    if (!isOnline(row)) this.events.emit('runners');
     return { commands: row.commands, run: await this.runs.claim(id) };
   }
 

@@ -80,9 +80,9 @@ export class LoginsService {
 
   // Queues the command for the runner's next poll, a couple of seconds away.
   private async send(runner: Runner, command: RunnerCommand) {
-    await this.dataSource.query(`UPDATE runners SET commands = commands || $2::jsonb WHERE id = $1`, [
+    await this.dataSource.query(`UPDATE runners SET commands = JSON_ARRAY_APPEND(commands, '$', CAST(? AS JSON)) WHERE id = ?`, [
+      JSON.stringify(command),
       runner.id,
-      JSON.stringify([command]),
     ]);
     this.events.emit('logins');
     return this.list(runner.id);

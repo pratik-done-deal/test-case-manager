@@ -33,33 +33,33 @@ export class Runner {
   id: string;
 
   // RUNNER_NAME on the laptop, e.g. "pratik-mac".
-  @Column('text', { unique: true })
+  @Column('varchar', { length: 100, unique: true })
   name: string;
 
-  @Column('timestamptz', { name: 'last_seen_at' })
+  @Column('datetime', { precision: 3, name: 'last_seen_at' })
   lastSeenAt: Date;
 
   // The app its ai-qa settings point at, and the branch and commit of its checkout.
-  @Column('jsonb', { nullable: true })
+  @Column('json', { nullable: true })
   environment: RunEnvironment | null;
 
   // The ai-qa tests it collected; which test cases they cover is worked out here.
-  @Column('jsonb')
+  @Column('json')
   tests: CollectedTest[];
 
   // Why it could not collect its tests, when it couldn't.
   @Column('text', { name: 'tests_reason', nullable: true })
   testsReason: string | null;
 
-  @Column('timestamptz', { name: 'tests_at', nullable: true })
+  @Column('datetime', { precision: 3, name: 'tests_at', nullable: true })
   testsAt: Date | null;
 
-  @Column('jsonb', { nullable: true })
+  @Column('json', { nullable: true })
   logins: RunnerLogins | null;
 
-  @Column('jsonb')
+  @Column('json')
   commands: RunnerCommand[];
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt: Date;
 }

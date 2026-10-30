@@ -40,7 +40,7 @@ export class Suite {
   @Column('text')
   coverage: string;
 
-  @Column('text')
+  @Column('varchar', { length: 512, unique: true })
   source: string;
 
   @Column('text')
@@ -54,13 +54,13 @@ export class Suite {
   setup: string;
 
   // Set when the file is no longer in the specs folder. Rows are kept so results survive a return.
-  @Column('timestamptz', { name: 'archived_at', nullable: true })
+  @Column('datetime', { precision: 3, name: 'archived_at', nullable: true })
   archivedAt: Date | null;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt: Date;
 
   @OneToMany(() => Scenario, (scenario) => scenario.suite)
@@ -72,7 +72,7 @@ export class Scenario {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column('uuid', { name: 'suite_id' })
+  @Column('char', { length: 36, name: 'suite_id' })
   suiteId: string;
 
   @ManyToOne(() => Suite, (suite) => suite.scenarios, { onDelete: 'CASCADE' })
@@ -111,13 +111,13 @@ export class Scenario {
   @Column('int')
   position: number;
 
-  @Column('timestamptz', { name: 'archived_at', nullable: true })
+  @Column('datetime', { precision: 3, name: 'archived_at', nullable: true })
   archivedAt: Date | null;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt: Date;
 
   @OneToMany(() => TestCase, (testCase) => testCase.scenario)
@@ -130,7 +130,7 @@ export class TestCase {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column('uuid', { name: 'scenario_id' })
+  @Column('char', { length: 36, name: 'scenario_id' })
   scenarioId: string;
 
   @ManyToOne(() => Scenario, (scenario) => scenario.cases, { onDelete: 'CASCADE' })
@@ -147,7 +147,7 @@ export class TestCase {
   @Column('text', { nullable: true })
   given: string | null;
 
-  @Column('jsonb')
+  @Column('json')
   steps: string[];
 
   @Column('text')
@@ -159,7 +159,7 @@ export class TestCase {
   @Column('text')
   type: string;
 
-  @Column('jsonb')
+  @Column('json')
   req: string[];
 
   @Column('text', { name: 'run_as' })
@@ -169,7 +169,7 @@ export class TestCase {
   detail: string | null;
 
   // The nodes of the split review files that show this case, e.g. "admin-sellers/seller-workspace/notes".
-  @Column('jsonb')
+  @Column('json')
   areas: string[];
 
   // The feature that added it: its scenario's Feature line, or a requirement id with the feature's prefix.
@@ -179,13 +179,13 @@ export class TestCase {
   @Column('int')
   position: number;
 
-  @Column('timestamptz', { name: 'archived_at', nullable: true })
+  @Column('datetime', { precision: 3, name: 'archived_at', nullable: true })
   archivedAt: Date | null;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  @CreateDateColumn({ name: 'created_at', type: 'datetime', precision: 3 })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt: Date;
 }
 
@@ -193,10 +193,10 @@ export class TestCase {
 // "qa.done.deals"). No row means not run there.
 @Entity('results')
 export class Result {
-  @PrimaryColumn('uuid', { name: 'test_case_id' })
+  @PrimaryColumn('char', { length: 36, name: 'test_case_id' })
   testCaseId: string;
 
-  @PrimaryColumn('text')
+  @PrimaryColumn('varchar', { length: 200 })
   environment: string;
 
   @ManyToOne(() => TestCase, { onDelete: 'CASCADE' })
@@ -207,24 +207,24 @@ export class Result {
   status: 'pass' | 'fail';
 
   // "manual", or the id of the run that set it.
-  @Column('text')
+  @Column('varchar', { length: 512, unique: true })
   source: string;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'datetime', precision: 3 })
   updatedAt: Date;
 }
 
 // A module.yml or feature.yml: the name and status of a folder.
 @Entity('folders')
 export class Folder {
-  @PrimaryColumn('text')
+  @PrimaryColumn('varchar', { length: 16 })
   kind: 'feature' | 'module';
 
-  @PrimaryColumn('text')
+  @PrimaryColumn('varchar', { length: 64 })
   role: string;
 
   // Under the role folder: "admin-sellers", "admin-sellers/seller-workspace", "seller-qa".
-  @PrimaryColumn('text')
+  @PrimaryColumn('varchar', { length: 500 })
   path: string;
 
   @Column('text')
