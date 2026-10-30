@@ -29,6 +29,11 @@ class TestsDto {
   @ValidateIf((dto: TestsDto) => dto.reason !== null)
   @IsString()
   reason: string | null;
+
+  // Sent again when the checkout moved to another branch or commit, or its settings to another app.
+  @IsOptional()
+  @IsObject()
+  environment?: RunEnvironment;
 }
 
 class LoginsDto {
@@ -73,7 +78,7 @@ export class AgentController {
 
   @Put(':runner/tests')
   tests(@Param('runner', RUNNER) runner: string, @Body() body: TestsDto) {
-    return this.runners.setTests(runner, body.tests, body.reason);
+    return this.runners.setTests(runner, body.tests, body.reason, body.environment ?? null);
   }
 
   @Put(':runner/logins')

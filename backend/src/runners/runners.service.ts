@@ -51,9 +51,15 @@ export class RunnersService {
     return { id: (rows as { id: string }[])[0].id };
   }
 
-  async setTests(id: string, tests: CollectedTest[], reason: string | null) {
+  async setTests(id: string, tests: CollectedTest[], reason: string | null, environment: RunEnvironment | null) {
     await this.get(id);
-    await this.runners.update(id, { tests: reason ? [] : tests, testsReason: reason, testsAt: new Date(), lastSeenAt: new Date() });
+    await this.runners.update(id, {
+      tests: reason ? [] : tests,
+      testsReason: reason,
+      testsAt: new Date(),
+      lastSeenAt: new Date(),
+      ...(environment ? { environment } : {}),
+    });
     this.events.emit('automation');
     this.events.emit('runners');
   }

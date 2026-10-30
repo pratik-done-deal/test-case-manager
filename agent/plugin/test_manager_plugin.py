@@ -1,8 +1,8 @@
-"""Loaded into ai-qa's pytest by the Test Manager backend (`-p test_manager_plugin`). Each part is off
+"""Loaded into ai-qa's pytest by the Test Manager runner agent (`-p test_manager_plugin`). Each part is off
 unless its variable is set.
 
 TM_COLLECT_OUT=<file>: after collection, writes every test as JSON (its node id, file, function name,
-docstrings and markers), from which the backend works out which test case each test covers.
+docstrings and markers), from which the backend works out which test case each test covers (sent by the agent).
 
 TM_SELECT=<file>: runs only the node ids listed in the file, one per line.
 

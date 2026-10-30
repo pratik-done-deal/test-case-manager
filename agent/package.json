@@ -1,0 +1,11 @@
+{
+  "name": "test-manager-agent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Runs Test Manager's test runs and login windows on a tester's laptop, next to its ai-qa checkout.",
+  "type": "module",
+  "engines": { "node": ">=20.12" },
+  "scripts": {
+    "start": "node src/index.mjs"
+  }
+}
