@@ -1,0 +1,45 @@
+# Test Manager: Postgres, the API and the web app. Copy .env.example to .env first.
+#   docker compose up -d --build        then open http://localhost:8080
+# The API can run as several containers: docker compose up -d --scale backend=2
+services:
+  db:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: test_manager
+      POSTGRES_USER: test_manager
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_manager -d test_manager"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://test_manager:${POSTGRES_PASSWORD}@db:5432/test_manager
+      SYNC_TOKEN: ${SYNC_TOKEN:?set SYNC_TOKEN in .env}
+      RUNNER_TOKEN: ${RUNNER_TOKEN:?set RUNNER_TOKEN in .env}
+      # Runs the migrations on start. With several API containers, set it to false and run
+      # `docker compose run --rm backend npm run migrate` before each deploy instead.
+      MIGRATIONS_RUN: ${MIGRATIONS_RUN:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:4000
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  db:
