@@ -48,6 +48,7 @@ const KIND: Record<RunScope['kind'], string> = {
 }
 
 const RUN_STATUS: Record<Run['status'], string> = {
+  queued: 'Waiting for the runner',
   running: 'Running',
   finished: 'Finished',
   stopped: 'Stopped',
@@ -110,9 +111,15 @@ export function ReportView({ id, live }: { id: string; live: Run | null }) {
           {when(run.startedAt)}
           {run.finishedAt && ` · took ${duration(summary.seconds)}`}
           {run.status === 'running' && ' · still running'}
+          {run.status === 'queued' && ' · waiting for the runner to start it'}
         </p>
         <ul className="report-meta">
-          {run.environment?.appUrl && <li>{new URL(run.environment.appUrl).host}</li>}
+          {(run.environmentKey ?? run.environment?.appUrl) && (
+            <li title="The app the tests ran against; its results are kept under this environment">
+              {run.environmentKey ?? new URL(run.environment!.appUrl!).host}
+            </li>
+          )}
+          {run.runner && <li title="The laptop that ran the tests">on {run.runner}</li>}
           <li>{run.options.headed ? 'Headed' : 'Headless'}</li>
           <li>{run.options.includeDestructive ? 'Destructive tests included' : 'Destructive tests left out'}</li>
           {run.environment?.branch && (

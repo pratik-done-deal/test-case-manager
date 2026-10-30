@@ -3,6 +3,7 @@ import { fetchCatalogText, fetchResults, putResult, subscribe } from './api'
 import { Sidebar } from './Sidebar'
 import { PageView } from './PageView'
 import { HistoryView, parseReportsHash, ReportView } from './Reports'
+import { useEnvironment, useRunners, Workspace } from './Runners'
 import { RunBar, useRunner } from './Runs'
 import { Sessions, useLogins } from './Sessions'
 import { buildTree, GROUPS, pageHash, parseHash, type GroupKey, type Page, type TreeNode } from './tree'
@@ -10,15 +11,20 @@ import type { Catalog, Result, Results, TestCase } from './types'
 
 const POLL_MS = 30_000
 
-type Extra = { automation: () => void; runs: () => void; logins: () => void }
+type Extra = { automation: () => void; runs: () => void; logins: () => void; runners: () => void; environments: () => void }
 
-// Loads the test cases and results, then keeps them current: the backend announces every change,
-// with a timer and a reload on returning to the tab as the fallback. `extra` is refreshed the same way.
-function useData(extra: Extra) {
+// Loads the test cases and the results on the chosen environment, then keeps them current: the backend
+// announces every change, with a timer and a reload on returning to the tab as the fallback. `extra` is
+// refreshed the same way.
+function useData(extra: Extra, environment: string | null) {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [results, setResults] = useState<Results>({})
   const [error, setError] = useState<string | null>(null)
   const lastText = useRef('')
+  // Read by the refreshes, which are subscribed once.
+  const environmentRef = useRef(environment)
+  environmentRef.current = environment
+  const refreshResults = useRef(() => {})
 
   useEffect(() => {
     let cancelled = false
@@ -37,17 +43,21 @@ function useData(extra: Extra) {
         lastText.current = text
         setCatalog(JSON.parse(text))
       })
-    const refreshResults = () =>
+    const loadResults = () =>
       attempt(async () => {
-        const latest = await fetchResults()
-        if (!cancelled) setResults(latest)
+        const asked = environmentRef.current
+        const latest = await fetchResults(asked)
+        if (!cancelled && environmentRef.current === asked) setResults(latest)
       })
+    refreshResults.current = loadResults
     const refresh = () => {
       refreshCatalog()
-      refreshResults()
+      loadResults()
       extra.automation()
       extra.runs()
       extra.logins()
+      extra.runners()
+      extra.environments()
     }
     const onVisible = () => {
       if (!document.hidden) refresh()
@@ -55,7 +65,20 @@ function useData(extra: Extra) {
     refresh()
     const timer = setInterval(refresh, POLL_MS)
     document.addEventListener('visibilitychange', onVisible)
-    const unsubscribe = subscribe({ catalog: refreshCatalog, results: refreshResults, ...extra })
+    const unsubscribe = subscribe({
+      catalog: refreshCatalog,
+      results: () => {
+        loadResults()
+        extra.environments()
+      },
+      automation: extra.automation,
+      runs: extra.runs,
+      logins: extra.logins,
+      runners: () => {
+        extra.runners()
+        extra.environments()
+      },
+    })
     return () => {
       cancelled = true
       clearInterval(timer)
@@ -64,8 +87,17 @@ function useData(extra: Extra) {
     }
   }, [])
 
+  useEffect(() => {
+    setResults({})
+    refreshResults.current()
+  }, [environment])
+
   // Shown at once, then saved; if the save fails the server's results are put back.
   const setResult = async (key: string, result: Result | null) => {
+    if (!environment) {
+      setError('Pick the environment these results are for (Results for, at the top)')
+      return
+    }
     setResults((previous) => {
       const next = { ...previous }
       if (result) next[key] = result
@@ -73,10 +105,10 @@ function useData(extra: Extra) {
       return next
     })
     try {
-      await putResult(key, result)
+      await putResult(key, environment, result)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-      fetchResults().then(setResults, () => undefined)
+      fetchResults(environment).then(setResults, () => undefined)
     }
   }
 
@@ -95,13 +127,20 @@ function useHash() {
 
 export default function App() {
   const [runError, setRunError] = useState<string | null>(null)
-  const { runner, dialog, refreshAutomation, refreshRun } = useRunner(setRunError)
-  const { logins, setLogins, refresh: refreshLogins } = useLogins()
-  const { catalog, results, error, setResult } = useData({
-    automation: refreshAutomation,
-    runs: refreshRun,
-    logins: refreshLogins,
-  })
+  const runners = useRunners()
+  const environments = useEnvironment(runners.runner)
+  const { runner, dialog, refreshAutomation, refreshRun } = useRunner(setRunError, runners.runnerId)
+  const { logins, setLogins, refresh: refreshLogins } = useLogins(runners.runnerId)
+  const { catalog, results, error, setResult } = useData(
+    {
+      automation: refreshAutomation,
+      runs: refreshRun,
+      logins: refreshLogins,
+      runners: runners.refresh,
+      environments: environments.refresh,
+    },
+    environments.environment,
+  )
   const hash = useHash()
 
   const trees = useMemo(() => {
@@ -156,7 +195,15 @@ export default function App() {
         reportsOpen={Boolean(reports)}
       />
       <main>
-        <Sessions logins={logins} onChange={setLogins} onError={setRunError} />
+        <Workspace
+          runners={runners.runners}
+          runnerId={runners.runnerId}
+          onRunner={runners.choose}
+          environments={environments.environments}
+          environment={environments.environment}
+          onEnvironment={environments.choose}
+        />
+        <Sessions logins={logins} runnerId={runners.runnerId} onChange={setLogins} onError={setRunError} />
         {error && <p className="notice">Could not reach the server: {error}. What you see may be out of date.</p>}
         {runError && (
           <p className="notice">

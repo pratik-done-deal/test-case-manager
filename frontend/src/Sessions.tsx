@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchLogins, loginAction } from './api'
 import type { LoginRole, Logins } from './types'
 
 const LABELS: Record<LoginRole, string> = { buyer: 'Buyer', seller: 'Seller', admin: 'Admin', biz_user: 'Biz user' }
 
-// Every role's saved session and login window, refreshed by the caller on the backend's `logins` event.
-export function useLogins() {
+// Every role's saved session and login window on the chosen runner's laptop, refreshed by the caller on
+// the backend's `logins` event.
+export function useLogins(runnerId: string | null) {
   const [logins, setLogins] = useState<Logins | null>(null)
+  const runnerRef = useRef(runnerId)
+  runnerRef.current = runnerId
   const refresh = useCallback(() => {
-    fetchLogins().then(setLogins, () => undefined)
+    const asked = runnerRef.current
+    fetchLogins(asked).then((latest) => {
+      if (runnerRef.current === asked) setLogins(latest)
+    }, () => undefined)
   }, [])
+  useEffect(refresh, [runnerId, refresh])
   return { logins, setLogins, refresh }
 }
 
@@ -22,15 +29,17 @@ function ago(iso: string, now: number) {
   return `saved ${Math.round(hours / 24)} days ago`
 }
 
-// The buttons at the top of the page that save the test suite's logins, the same as
-// `python scripts/save_auth_state.py <role>`: a browser opens at the role's login page, the tester
-// logs in there and clicks Save session here.
+// The buttons at the top of the page that save the test suite's logins on the chosen runner's laptop,
+// the same as `python scripts/save_auth_state.py <role>` there: a browser opens at the role's login page,
+// the tester logs in there and clicks Save session here.
 export function Sessions({
   logins,
+  runnerId,
   onChange,
   onError,
 }: {
   logins: Logins | null
+  runnerId: string | null
   onChange: (logins: Logins) => void
   onError: (message: string) => void
 }) {
@@ -41,11 +50,11 @@ export function Sessions({
     return () => clearInterval(timer)
   }, [])
 
-  if (!logins) return null
+  if (!logins || !runnerId) return null
 
   const act = (role: LoginRole, action?: 'save' | 'cancel') => {
     if (!action) setHidden((previous) => new Set([...previous].filter((r) => r !== role)))
-    loginAction(role, action).then(onChange, (e) => onError(e instanceof Error ? e.message : String(e)))
+    loginAction(runnerId, role, action).then(onChange, (e) => onError(e instanceof Error ? e.message : String(e)))
   }
   const open = logins.roles.filter(({ role, login }) => login && !hidden.has(role) && login.status !== 'cancelled')
   const app = logins.app ? new URL(logins.app).host : null

@@ -718,6 +718,77 @@ main {
   margin: -32px auto 40px;
 }
 
+/* Which laptop runs the tests and which environment's results show, above the test logins. */
+.workspace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  max-width: 860px;
+  margin: -32px auto 16px;
+  font-size: 13px;
+}
+
+.workspace + .sessions {
+  margin-top: 0;
+}
+
+.workspace-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-field > span:first-child {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.workspace-field select,
+.workspace-field input {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.workspace-field input {
+  width: 21ch;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.workspace-field select:focus-visible,
+.workspace-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.workspace-environment {
+  margin-left: auto;
+}
+
+.workspace-hint {
+  color: var(--muted);
+}
+
+.runner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.runner-online {
+  background: var(--pass);
+}
+
+.runner-offline {
+  background: var(--faint);
+}
+
 .sessions-row {
   display: flex;
   flex-wrap: wrap;

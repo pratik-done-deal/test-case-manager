@@ -1,5 +1,5 @@
 // The only place the app talks to the backend.
-import type { Automation, LoginRole, Logins, Report, Result, Results, Run, RunListItem, RunScope } from './types'
+import type { Automation, Environment, LoginRole, Logins, Report, Result, Results, Run, RunListItem, RunnerInfo, RunScope } from './types'
 
 const API_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 
@@ -14,34 +14,54 @@ export async function fetchCatalogText(): Promise<string> {
   return (await request('/catalog')).text()
 }
 
-export async function fetchResults(): Promise<Results> {
-  return (await request('/results')).json()
+const query = (params: Record<string, string | null | undefined>) => {
+  const entries = Object.entries(params).filter((entry): entry is [string, string] => Boolean(entry[1]))
+  return entries.length ? `?${new URLSearchParams(entries)}` : ''
+}
+
+// The results on one environment (the app the tests point at, e.g. "qa.done.deals").
+export async function fetchResults(environment: string | null): Promise<Results> {
+  if (!environment) return {}
+  return (await request(`/results${query({ environment })}`)).json()
+}
+
+// Every environment that has results or a runner pointed at it.
+export async function fetchEnvironments(): Promise<Environment[]> {
+  return (await request('/results/environments')).json()
 }
 
 // null clears the result, back to "not run".
-export async function putResult(key: string, result: Result | null): Promise<void> {
+export async function putResult(key: string, environment: string, result: Result | null): Promise<void> {
   await request(`/results/${key}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ result }),
+    body: JSON.stringify({ result, environment }),
   })
 }
 
-export async function fetchAutomation(): Promise<Automation> {
-  return (await request('/runs/automation')).json()
+// The runner agents on testers' laptops, online ones first.
+export async function fetchRunners(): Promise<RunnerInfo[]> {
+  return (await request('/runners')).json()
 }
 
-// The run going now, else the last one; null before the first. withLog adds pytest's output.
-export async function fetchCurrentRun(withLog = false): Promise<Run | null> {
-  const text = await (await request(`/runs/current${withLog ? '?log=1' : ''}`)).text()
+// Which test cases the runner has tests for.
+export async function fetchAutomation(runner: string | null): Promise<Automation> {
+  return (await request(`/runs/automation${query({ runner })}`)).json()
+}
+
+// The run going now on the runner, else its last one; null before the first. withLog adds pytest's output.
+export async function fetchCurrentRun(runner: string | null, withLog = false): Promise<Run | null> {
+  if (!runner) return null
+  const text = await (await request(`/runs/current${query({ runner, log: withLog ? '1' : null })}`)).text()
   return text ? JSON.parse(text) : null
 }
 
-// Runs the tests of these test cases. Tests that change QA data only run with includeDestructive;
-// headed shows the browser on the machine the backend runs on.
+// Queues the tests of these test cases for the runner. Tests that change QA data only run with
+// includeDestructive; headed shows the browser on the runner's laptop.
 export async function startRun(body: {
   label: string
   testCaseKeys: string[]
+  runnerId: string
   includeDestructive: boolean
   headed: boolean
   scope: RunScope
@@ -78,13 +98,13 @@ export async function stopRun(id: string): Promise<void> {
   await request(`/runs/${id}/stop`, { method: 'POST' })
 }
 
-export async function fetchLogins(): Promise<Logins> {
-  return (await request('/logins')).json()
+export async function fetchLogins(runner: string | null): Promise<Logins> {
+  return (await request(`/logins${query({ runner })}`)).json()
 }
 
-// Opens the role's login browser (no action), saves what was logged in there, or closes it.
-export async function loginAction(role: LoginRole, action?: 'save' | 'cancel'): Promise<Logins> {
-  const response = await fetch(`${API_URL}/logins/${role}${action ? `/${action}` : ''}`, { method: 'POST' })
+// Opens the role's login browser on the runner's laptop (no action), saves what was logged in there, or closes it.
+export async function loginAction(runner: string, role: LoginRole, action?: 'save' | 'cancel'): Promise<Logins> {
+  const response = await fetch(`${API_URL}/logins/${role}${action ? `/${action}` : ''}${query({ runner })}`, { method: 'POST' })
   if (!response.ok) {
     const { message } = await response.json().catch(() => ({ message: null }))
     throw new Error(message ?? `Could not ${action ?? 'open the login window'} (${response.status})`)
@@ -98,6 +118,7 @@ type Handlers = {
   automation: () => void
   runs: () => void
   logins: () => void
+  runners: () => void
 }
 
 // Calls back when the backend says something changed, and once for everything whenever the

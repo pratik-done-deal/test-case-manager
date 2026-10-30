@@ -17,17 +17,21 @@ type Asking = { label: string; keys: string[]; tests: number; risky: number; sco
 // A run with more tests than this (a whole role, a large module) is confirmed before it starts.
 const BIG_RUN = 100
 
-// Keeps the automation map and the current run up to date, and asks before a run that would change
-// QA data. Returns the runner for the pages, plus the bar and dialog to render once.
-export function useRunner(onError: (message: string) => void) {
+// Keeps the automation map and the current run of the chosen runner (a tester's laptop) up to date, and
+// asks before a run that would change QA data. Returns the runner for the pages, plus the bar and dialog
+// to render once.
+export function useRunner(onError: (message: string) => void, runnerId: string | null) {
   const [automation, setAutomation] = useState<Automation | null>(null)
   const [run, setRun] = useState<Run | null>(null)
+  // Read by the refreshes, which the page subscribes once to the backend's events.
+  const runnerRef = useRef(runnerId)
+  runnerRef.current = runnerId
   const [asking, setAsking] = useState<Asking | null>(null)
   const [headed, setHeadedState] = useState(readHeaded)
   // Runs started from this tab: when one that covers more than a case ends, its report opens here.
   const startedHere = useRef(new Set<string>())
   useEffect(() => {
-    if (run && run.status !== 'running' && run.reported && startedHere.current.delete(run.id)) {
+    if (run && !isGoing(run) && run.reported && startedHere.current.delete(run.id)) {
       window.location.hash = `#/reports/${run.id}`
     }
   }, [run])
@@ -36,17 +40,38 @@ export function useRunner(onError: (message: string) => void) {
     saveHeaded(value)
   }
 
+  // A reply about a runner that is no longer the chosen one is dropped.
   const refreshAutomation = useCallback(() => {
-    fetchAutomation().then(setAutomation, () => undefined)
+    const asked = runnerRef.current
+    fetchAutomation(asked).then((latest) => {
+      if (runnerRef.current === asked) setAutomation(latest)
+    }, () => undefined)
   }, [])
   const refreshRun = useCallback(() => {
-    fetchCurrentRun().then(setRun, () => undefined)
+    const asked = runnerRef.current
+    fetchCurrentRun(asked).then((latest) => {
+      if (runnerRef.current === asked) setRun(latest)
+    }, () => undefined)
   }, [])
+  useEffect(() => {
+    setAutomation(null)
+    setRun(null)
+    refreshAutomation()
+    refreshRun()
+  }, [runnerId, refreshAutomation, refreshRun])
 
   const launch = async (asked: Asking, includeDestructive: boolean) => {
     setAsking(null)
+    if (!runnerId) return
     try {
-      const started = await startRun({ label: asked.label, testCaseKeys: asked.keys, includeDestructive, headed, scope: asked.scope })
+      const started = await startRun({
+        label: asked.label,
+        testCaseKeys: asked.keys,
+        runnerId,
+        includeDestructive,
+        headed,
+        scope: asked.scope,
+      })
       startedHere.current.add(started.id)
       setRun(started)
     } catch (e) {
@@ -64,7 +89,7 @@ export function useRunner(onError: (message: string) => void) {
     else void launch(asked, false)
   }
 
-  const runner: Runner = { automation, run, going: run?.status === 'running', start, headed, setHeaded }
+  const runner: Runner = { automation, run, going: isGoing(run), start, headed, setHeaded }
   const dialog = asking && (
     <ConfirmRun
       asking={asking}
@@ -75,6 +100,9 @@ export function useRunner(onError: (message: string) => void) {
   )
   return { runner, dialog, refreshAutomation, refreshRun }
 }
+
+// Queued for the runner or running on it.
+const isGoing = (run: Run | null) => run?.status === 'running' || run?.status === 'queued'
 
 // Headless or headed, remembered in this browser; headless until changed.
 const HEADED = 'test-manager:headed'
@@ -106,7 +134,7 @@ export function ModeToggle({ runner }: { runner: Runner }) {
           aria-pressed={runner.headed === value}
           title={
             value
-              ? 'Runs open a visible browser window (on the machine the backend runs on)'
+              ? 'Runs open a visible browser window on the laptop that runs them'
               : 'Runs use a hidden browser (faster)'
           }
           onClick={() => runner.setHeaded(value)}
@@ -283,11 +311,12 @@ function saveDismissed(id: string) {
 }
 
 const STATUS: Record<Run['status'], string> = {
+  queued: 'Waiting for the runner',
   running: 'Running',
   finished: 'Finished',
   stopped: 'Stopped',
   error: 'pytest could not run the tests',
-  interrupted: 'Interrupted: the backend restarted during the run',
+  interrupted: 'Interrupted: the runner stopped reporting during the run',
 }
 
 // The run going now, or the last one until it is dismissed: progress, failures, pytest's output, Stop.
@@ -302,7 +331,7 @@ export function RunBar({ runner }: { runner: Runner }) {
   // The output is only fetched while it is open, and again as the run moves on.
   useEffect(() => {
     if (!open || !run) return
-    fetchCurrentRun(true).then((latest) => setLog(latest?.log ?? ''), () => undefined)
+    fetchCurrentRun(run.runner?.id ?? null, true).then((latest) => setLog(latest?.log ?? ''), () => undefined)
   }, [open, run])
   useEffect(() => {
     const pre = logRef.current
@@ -310,9 +339,9 @@ export function RunBar({ runner }: { runner: Runner }) {
   }, [log])
   useEffect(() => setStopping(false), [run?.id])
 
-  if (!run || (dismissed === run.id && run.status !== 'running')) return null
+  if (!run || (dismissed === run.id && !isGoing(run))) return null
 
-  const going = run.status === 'running'
+  const going = isGoing(run)
   const c = run.counts
   const failed = (c.failed ?? 0) + (c.error ?? 0)
   const passed = (c.passed ?? 0) + (c.xpassed ?? 0)
@@ -341,8 +370,9 @@ export function RunBar({ runner }: { runner: Runner }) {
       <div className="run-line">
         {going ? <span className="spinner" /> : <span className={`run-dot ${dot}`} />}
         <span className="run-label">
-          {STATUS[run.status]} <b>{run.label}</b>
+          {run.status === 'queued' ? `Waiting for ${run.runner?.name ?? 'the runner'}:` : STATUS[run.status]} <b>{run.label}</b>
           {run.options?.headed && <span className="run-mode"> · headed</span>}
+          {run.runner && <span className="run-mode"> · {run.runner.name}</span>}
         </span>
         <span className="run-counts">
           {run.done}/{plural(run.total, 'test')}
@@ -361,13 +391,13 @@ export function RunBar({ runner }: { runner: Runner }) {
           {going ? (
             <button
               className="secondary-button"
-              disabled={stopping}
+              disabled={stopping || run.stopRequested}
               onClick={() => {
                 setStopping(true)
                 stopRun(run.id).catch(() => setStopping(false))
               }}
             >
-              {stopping ? 'Stopping…' : 'Stop'}
+              {stopping || run.stopRequested ? 'Stopping…' : 'Stop'}
             </button>
           ) : (
             <button

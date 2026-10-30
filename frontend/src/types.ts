@@ -58,10 +58,25 @@ export type Catalog = { suites: Suite[]; folders: Folder[] }
 export type Result = 'pass' | 'fail'
 export type Results = Record<string, Result>
 
-// GET /api/runs/automation: which test cases have automated tests in ai-qa.
+// GET /api/runners: a runner agent on a tester's laptop, which runs the tests and login windows there.
+export type RunnerInfo = {
+  id: string
+  name: string
+  online: boolean
+  lastSeenAt: string
+  environment: { appUrl: string | null; branch: string | null; commit: string | null; dirty: boolean } | null
+  environmentKey: string | null // the app its tests point at, e.g. "qa.done.deals"
+  tests: number
+  testsReason: string | null
+}
+
+// GET /api/results/environments: where results are kept apart, e.g. "qa.done.deals", "localhost:3000".
+export type Environment = { key: string; results: number }
+
+// GET /api/runs/automation?runner=: which test cases have automated tests in that runner's ai-qa.
 export type Automation = {
   available: boolean
-  reason: string | null // why tests can't be run from here, when they can't
+  reason: string | null // why tests can't be run on that runner, when they can't
   tests: number
   cases: Record<string, { tests: number; risky: number }> // risky: marked destructive or live_login
 }
@@ -72,11 +87,14 @@ export type RunScope = { kind: 'case' | 'scenario' | 'page' | 'filtered' | 'role
 // A test case's place in a run.
 export type CaseRunState = 'queued' | 'running' | 'pass' | 'fail' | 'skipped' | 'not run'
 
-// GET /api/runs/current: the run going now, else the last one.
+// GET /api/runs/current: the run going now on a runner, else its last one.
 export type Run = {
   id: string
   label: string
-  status: 'running' | 'finished' | 'stopped' | 'error' | 'interrupted'
+  status: 'queued' | 'running' | 'finished' | 'stopped' | 'error' | 'interrupted'
+  runner: { id: string; name: string } | null
+  environmentKey: string | null
+  stopRequested: boolean
   startedAt: string
   finishedAt: string | null
   exitCode: number | null
@@ -124,6 +142,8 @@ export type Report = {
     status: Run['status']
     scope: RunScope | null
     environment: { appUrl: string | null; branch: string | null; commit: string | null; dirty: boolean } | null
+    runner: string | null // the laptop it ran on
+    environmentKey: string | null
     options: Run['options']
     startedAt: string
     finishedAt: string | null
@@ -163,7 +183,7 @@ export type Report = {
 export type LoginRole = 'buyer' | 'seller' | 'admin' | 'biz_user'
 export type Logins = {
   available: boolean
-  reason: string | null // why logins can't be saved from here, when they can't
+  reason: string | null // why logins can't be saved on the runner, when they can't
   app: string | null // the app the sessions are for (QA or local)
   roles: {
     role: LoginRole
