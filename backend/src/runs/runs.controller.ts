@@ -41,12 +41,16 @@ class StartRunDto {
   @IsUUID('all', { each: true })
   testCaseKeys: string[];
 
+  // The runner agent (a tester's laptop) that runs the tests.
+  @IsUUID()
+  runnerId: string;
+
   // Also run tests marked destructive or live_login, which change QA data or send real logins.
   @IsOptional()
   @IsBoolean()
   includeDestructive?: boolean;
 
-  // Show the browser (only useful when the backend runs on your own machine).
+  // Show the browser on the runner's laptop.
   @IsOptional()
   @IsBoolean()
   headed?: boolean;
@@ -57,6 +61,8 @@ class StartRunDto {
   scope?: ScopeDto;
 }
 
+const OPTIONAL_UUID = new ParseUUIDPipe({ optional: true });
+
 @Controller('runs')
 export class RunsController {
   constructor(
@@ -64,15 +70,16 @@ export class RunsController {
     private readonly index: TestIndexService,
   ) {}
 
+  // ?runner=<id>: which test cases that runner has tests for.
   @Get('automation')
-  automation() {
-    return this.index.getAutomation();
+  automation(@Query('runner', OPTIONAL_UUID) runner?: string) {
+    return this.index.getAutomation(runner);
   }
 
-  // ?log=1 adds pytest's output.
+  // The run going now on ?runner=<id>, else its last one. ?log=1 adds pytest's output.
   @Get('current')
-  current(@Query('log') log?: string) {
-    return this.runs.current(log === '1');
+  current(@Query('runner', OPTIONAL_UUID) runner?: string, @Query('log') log?: string) {
+    return this.runs.current(runner, log === '1');
   }
 
   @Post()
@@ -80,6 +87,7 @@ export class RunsController {
     return this.runs.start({
       label: body.label,
       testCaseKeys: body.testCaseKeys,
+      runnerId: body.runnerId,
       includeDestructive: body.includeDestructive ?? false,
       headed: body.headed ?? false,
       scope: body.scope ? { kind: body.scope.kind, key: body.scope.key, name: body.scope.name } : null,
@@ -106,9 +114,11 @@ export class RunsController {
     res.type('text/plain').send(await this.runs.log(id));
   }
 
+  // Kept screenshots never change, so browsers may cache them.
   @Get(':id/screenshots/:file')
-  screenshot(@Param('id', ParseUUIDPipe) id: string, @Param('file') file: string, @Res() res: Response) {
-    res.sendFile(this.runs.screenshot(id, file));
+  async screenshot(@Param('id', ParseUUIDPipe) id: string, @Param('file') file: string, @Res() res: Response) {
+    const shot = await this.runs.screenshot(id, file);
+    res.type(shot.contentType).set('Cache-Control', 'private, max-age=86400').send(shot.data);
   }
 
   @Post(':id/stop')

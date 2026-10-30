@@ -1,9 +1,10 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
 
-export type RunStatus = 'running' | 'finished' | 'stopped' | 'error' | 'interrupted';
+// queued: waiting for its runner to pick it up.
+export type RunStatus = 'queued' | 'running' | 'finished' | 'stopped' | 'error' | 'interrupted';
 
 // What pytest said about one test: passed | failed | error | skipped | xfailed | xpassed; how many
-// seconds it took; and the screenshots kept from its failure (file names in the run's report folder).
+// seconds it took; and the screenshots kept from its failure (file names in the screenshots table).
 export type TestOutcome = {
   outcome: string;
   message: string | null;
@@ -37,7 +38,7 @@ export type RunSummary = {
 
 export type CaseStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'pending' | 'not run';
 
-// One pytest run started from the app.
+// One pytest run started from the app, run by the runner agent on a tester's laptop.
 @Entity('runs')
 export class Run {
   @PrimaryGeneratedColumn('uuid')
@@ -49,6 +50,25 @@ export class Run {
 
   @Column('text')
   status: RunStatus;
+
+  @Column('uuid', { name: 'runner_id', nullable: true })
+  runnerId: string | null;
+
+  // The app the tests point at, e.g. "qa.done.deals": the environment its results are kept under.
+  @Column('text', { name: 'environment_key', nullable: true })
+  environmentKey: string | null;
+
+  // Stop was pressed; the runner ends pytest when it next reports.
+  @Column('boolean', { name: 'stop_requested', default: false })
+  stopRequested: boolean;
+
+  // When the runner last reported on it; a running run that goes quiet was interrupted.
+  @Column('timestamptz', { name: 'heartbeat_at', nullable: true })
+  heartbeatAt: Date | null;
+
+  // The node id of the test running now.
+  @Column('text', { name: 'current_test', nullable: true })
+  currentTest: string | null;
 
   @Column('jsonb')
   options: { includeDestructive: boolean; headed: boolean };
@@ -67,8 +87,7 @@ export class Run {
   @Column('jsonb')
   snapshot: Record<string, CaseSnapshot>;
 
-  // { <node id>: outcome }, filled in as tests finish.
-  @Column('jsonb')
+  // { <node id>: outcome }, filled in as tests finish. Stored as run_tests rows; loaded by RunsService.
   outcomes: Record<string, TestOutcome>;
 
   @Column('jsonb', { nullable: true })
@@ -86,4 +105,49 @@ export class Run {
 
   @Column('timestamptz', { name: 'finished_at', nullable: true })
   finishedAt: Date | null;
+}
+
+// What pytest said about one test of a run.
+@Entity('run_tests')
+export class RunTest {
+  @PrimaryColumn('uuid', { name: 'run_id' })
+  runId: string;
+
+  @PrimaryColumn('text')
+  nodeid: string;
+
+  // The order the tests finished in.
+  @Column('int')
+  position: number;
+
+  @Column('text')
+  outcome: string;
+
+  @Column('text', { nullable: true })
+  message: string | null;
+
+  @Column('real', { nullable: true })
+  duration: number | null;
+
+  @Column('jsonb')
+  screenshots: { url: string; file: string }[];
+}
+
+// A failure screenshot kept with its run, since the runner's own copies are overwritten by every run.
+@Entity('screenshots')
+export class Screenshot {
+  @PrimaryColumn('uuid', { name: 'run_id' })
+  runId: string;
+
+  @PrimaryColumn('text')
+  file: string;
+
+  @Column('text', { name: 'content_type' })
+  contentType: string;
+
+  @Column('bytea')
+  data: Buffer;
+
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  createdAt: Date;
 }

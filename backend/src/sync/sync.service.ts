@@ -123,6 +123,8 @@ export class SyncService {
     const extras = this.caseExtras(docs, owners, [...folders.values()]);
 
     await this.dataSource.transaction(async (manager) => {
+      // One sync at a time across every backend instance: two at once would archive each other's rows.
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtext('test-manager:sync'))`);
       const now = new Date();
       const stored = await manager.find(Suite);
       const uploaded = new Set(docs.map((doc) => doc.source));

@@ -5,7 +5,6 @@ import {
   JoinColumn,
   ManyToOne,
   OneToMany,
-  OneToOne,
   PrimaryColumn,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -190,18 +189,26 @@ export class TestCase {
   updatedAt: Date;
 }
 
-// The current pass / fail of a test case. No row means not run.
+// The current pass / fail of a test case on one environment (the app the tests point at, e.g.
+// "qa.done.deals"). No row means not run there.
 @Entity('results')
 export class Result {
   @PrimaryColumn('uuid', { name: 'test_case_id' })
   testCaseId: string;
 
-  @OneToOne(() => TestCase, { onDelete: 'CASCADE' })
+  @PrimaryColumn('text')
+  environment: string;
+
+  @ManyToOne(() => TestCase, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'test_case_id' })
   testCase: TestCase;
 
   @Column('text')
   status: 'pass' | 'fail';
+
+  // "manual", or the id of the run that set it.
+  @Column('text')
+  source: string;
 
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt: Date;
