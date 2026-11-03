@@ -1,5 +1,5 @@
-# Copy into the ai-qa repo as .github/workflows/push-specs.yml, and copy backend/scripts/push-specs.mjs
-# from Test Manager to .github/scripts/push-specs.mjs there (it needs only Node, no packages).
+# Copy into the ai-qa repo as .github/workflows/push-specs.yml. It runs backend/scripts/push_specs.py
+# there (it needs only Python, no packages).
 # Then add two repository secrets in ai-qa: TEST_MANAGER_API_URL (https://<your app>/api) and
 # TEST_MANAGER_SYNC_TOKEN (the backend's SYNC_TOKEN).
 #
@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: 22
-      - run: node .github/scripts/push-specs.mjs specs
+          python-version: '3.12'
+      - run: python backend/scripts/push_specs.py specs
         env:
           API_URL: ${{ secrets.TEST_MANAGER_API_URL }}
           SYNC_TOKEN: ${{ secrets.TEST_MANAGER_SYNC_TOKEN }}

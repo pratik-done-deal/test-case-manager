@@ -4,9 +4,10 @@ A web app that shows every scenario and test case written by the ai-qa pipeline,
 result per test case. A case with an automated test gets its result only by running it; only a case
 with none (a manual check) has its result set by hand.
 
-- `backend/`: NestJS API with a MySQL 8.4 database. It reads the test case files from ai-qa's
-  `specs/` folder into the database and serves them, with the results and runs, to the frontend.
-  It keeps nothing in memory or on disk, so it can run as several containers.
+- `ai-qa/backend/` (in the ai-qa repo, checked out next to this folder): Flask API with a MySQL 8.4
+  database. It reads the test case files from ai-qa's `specs/` folder into the database and serves
+  them, with the results and runs, to the frontend. It keeps nothing in memory or on disk that MySQL
+  doesn't also hold, so it can run as several containers.
 - `frontend/`: React (Vite) app.
 - `agent/`: the runner agent. It runs on a tester's laptop next to their ai-qa checkout, and runs
   the tests and login windows the app asks for there. See [agent/README.md](agent/README.md).
@@ -25,18 +26,19 @@ browser ◄── nginx (frontend container) ──► API containers ◄──�
 
 ## Run it locally
 
-Needs Node 20.12+ and Docker (for MySQL).
+Needs Node 20.12+, Python 3.12 and Docker (for MySQL).
 
 ```bash
 cp .env.example .env                  # once; fill in the passwords and tokens
 docker compose up -d db               # MySQL on 127.0.0.1:3307
 
-cd backend
+cd ../ai-qa/backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env                  # once; DATABASE_URL with MYSQL_PASSWORD, SPECS_DIR, RUNNER_TOKEN
-npm install
-npm run dev                           # http://localhost:4000/api
+python wsgi.py                        # http://localhost:4000/api
 
-cd ../frontend
+cd ../../test-manager/frontend
 npm install
 npm run dev                           # http://localhost:5173
 
@@ -151,7 +153,7 @@ docker compose up -d --build  # http://<host>:8080
 Then:
 
 1. **Load the test cases.** From a machine with the ai-qa checkout:
-   `cd backend && API_URL=https://<host>/api SYNC_TOKEN=<token> npm run push-specs -- /path/to/ai-qa/specs`.
+   `cd ai-qa && API_URL=https://<host>/api SYNC_TOKEN=<token> python backend/scripts/push_specs.py specs`.
    To keep them current, add [deploy/push-specs.github-workflow.yml](deploy/push-specs.github-workflow.yml)
    to the ai-qa repo; every merge to main that changes `specs/` then pushes them.
 2. **Connect the testers' laptops.** Each tester runs the agent with `API_URL=https://<host>/api` and the
@@ -161,7 +163,7 @@ Then:
 
 Notes for running it elsewhere (Render, Railway, Fly, ECS, a VM):
 
-- **Images:** `backend/Dockerfile` and `frontend/Dockerfile`. The frontend container needs
+- **Images:** `ai-qa/backend/Dockerfile` and `frontend/Dockerfile`. The frontend container needs
   `BACKEND_URL` (where it reaches the API, e.g. `http://backend:4000`). Both have health checks; the
   API's is `GET /api/health`.
 - **Several API containers** work: each writes its changes to the `change_events` table and reads the
@@ -170,15 +172,16 @@ Notes for running it elsewhere (Render, Railway, Fly, ECS, a VM):
 - **Database:** MySQL 8.4 with `utf8mb4_0900_bin` (case-sensitive, like the ai-qa paths and ids) and
   UTC. A managed MySQL (RDS, Cloud SQL, PlanetScale…) works with `DATABASE_URL=mysql://…`; give it
   `max_allowed_packet` of at least 64 MB, since a run report with screenshots is sent in one statement. Run migrations once per deploy
-  (`MIGRATIONS_RUN=false` on the containers, and `npm run migrate` as a release step) instead of on
+  (`MIGRATIONS_RUN=false` on the containers, and `python -m app.database.migrate` as a release step) instead of on
   every container's start.
 - **Serving the frontend from another address** than the API: build it with
   `VITE_API_URL=https://<api host>/api` and set the API's `CORS_ORIGIN` to the frontend's address.
-- **Moving from the old Postgres database:** create the MySQL tables (`npm run migrate`), then
-  `POSTGRES_URL=postgres://… DATABASE_URL=mysql://… npm run migrate-from-postgres` in `backend/`. It only
-  reads Postgres, refuses a MySQL database that already has test cases, and copies everything in one
-  transaction; results recorded before environments existed go under `qa.done.deals`. Screenshots older
-  runs kept on disk are copied in with `node scripts/import-screenshots.mjs /path/to/storage/reports`.
+- **Moving from the old Postgres database:** create the MySQL tables (`python -m app.database.migrate`), then
+  `POSTGRES_URL=postgres://… DATABASE_URL=mysql://… python scripts/migrate_from_postgres.py` in `ai-qa/backend/`
+  (needs `pip install "psycopg[binary]"`). It only reads Postgres, refuses a MySQL database that already has
+  test cases, and copies everything in one transaction; results recorded before environments existed go under
+  `qa.done.deals`. Screenshots older runs kept on disk are copied in with
+  `python scripts/import_screenshots.py /path/to/storage/reports`.
 
 Not done yet: sign-in and a record of who set a result or started a run; screenshots move to object
 storage (S3) if the database grows too big for them.
